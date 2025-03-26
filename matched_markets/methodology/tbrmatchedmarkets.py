@@ -307,12 +307,12 @@ class TBRMatchedMarkets:
                   n_designs += n1 * n2 * n3 * n4 * n5
     return n_designs
 
-  def exhaustive_search(self) -> List[TBRMMDesign]:
+def exhaustive_search(self) -> List[TBRMMDesign]:
     """Search the design space for acceptable designs, within the constraints.
 
     Returns:
       the set of feasible designs found given the design parameters,
-        with their corresponding treatment/control groups and score.
+      with their corresponding treatment/control groups and score.
     """
     treatment_share_range = self.parameters.treatment_share_range
     budget_range = self.parameters.budget_range
@@ -324,93 +324,73 @@ class TBRMatchedMarkets:
     results = heapdict.HeapDict(size=self.parameters.n_designs)
 
     def skip_if_subset(geos: Set[GeoIndex]) -> bool:
-      """Check if one of the stored geo patterns is a subset of the geos.
-
-      Args:
-        geos: Set of geo indices.
-
-      Returns:
-        bool: True if one of the stored groups is a subset of the geos.
-      """
-      for p in skip_treatment_geo_patterns:
-        if set(p).issubset(geos):
-          return True
-      return False
+        """Check if one of the stored geo patterns is a subset of the geos."""
+        for p in skip_treatment_geo_patterns:
+            if set(p).issubset(geos):
+                return True
+        return False
 
     volume_tol = self.parameters.volume_ratio_tolerance
     if volume_tol is not None:
-      tol_min = 1.0 / (1.0 + volume_tol)
-      tol_max = 1.0 + volume_tol
+        tol_min = 1.0 / (1.0 + volume_tol)
+        tol_max = 1.0 + volume_tol
 
     treatment_group_sizes = self.treatment_group_size_range()
     for treatment_group_size in treatment_group_sizes:
 
-      # Treatment groups are saved for the purpose of the inclusion check.
-      save_treatment_groups = (treatment_group_size != skip_this_trt_group_size)
+        # Treatment groups are saved for the purpose of the inclusion check.
+        save_treatment_groups = (treatment_group_size != skip_this_trt_group_size)
 
-      treatment_groups = self.treatment_group_generator(treatment_group_size)
-      for treatment_group in treatment_groups:
-        treatment_share = self.data.aggregate_geo_share(treatment_group)
-        if treatment_share_range is not None:
-          # Skip this treatment group if the group implies too low or high share
-          # of response volume.
-          if (treatment_share > treatment_share_range[1] or
-              treatment_share < treatment_share_range[0]):
-            continue
-        elif skip_if_subset(treatment_group):
-          # If the group is a superset of a group that we already know has too
-          # high a share or budget, then skip this group too.
-          continue
-        y = self.data.aggregate_time_series(treatment_group)
-        diag = TBRMMDiagnostics(y, self.parameters)
-        req_impact = diag.estimate_required_impact(self.parameters.rho_max)
-        req_budget = req_impact / self.parameters.iroas
-        if budget_range is not None:
-          # If the budget is too high, skip this treatment group.
-          if req_budget > budget_range[1]:
-            if save_treatment_groups:
-              # We skip all treatment groups that are a superset of a treatment
-              # group that has too high an estimated budget.
-              skip_treatment_geo_patterns.append(treatment_group)
-              continue
-            # If the budget is too low, skip this treatment group.
-          elif req_budget < budget_range[0]:
-            continue
-        control_groups = self.control_group_generator(treatment_group)
-        for control_group in control_groups:
-          if volume_tol is not None:
-            control_share = self.data.aggregate_geo_share(control_group)
-            xy_share = control_share / treatment_share
-            if xy_share > tol_max or xy_share < tol_min:
-              continue
-          diag.x = self.data.aggregate_time_series(control_group)
-          corr = diag.corr  # pylint: disable=unused-variable
-          req_impact = diag.required_impact
-          req_budget = req_impact / self.parameters.iroas
-          if (budget_range is not None and (self._constraint_not_satisfied(
-              req_budget, budget_range[0], budget_range[1]))):
-            continue
+        treatment_groups = self.treatment_group_generator(treatment_group_size)
+        for treatment_group in treatment_groups:
+            treatment_share = self.data.aggregate_geo_share(treatment_group)
+            if treatment_share_range is not None:
+                # Skip this treatment group if the group implies too low or high share
+                # of response volume.
+                if (treatment_share > treatment_share_range[1] or
+                        treatment_share < treatment_share_range[0]):
+                    continue
+            elif skip_if_subset(treatment_group):
+                continue
+            y = self.data.aggregate_time_series(treatment_group)
+            diag = TBRMMDiagnostics(y, self.parameters)
+            req_impact = diag.estimate_required_impact(self.parameters.rho_max)
+            req_budget = req_impact / self.parameters.iroas
+            if budget_range is not None:
+                if req_budget > budget_range[1]:
+                    if save_treatment_groups:
+                        skip_treatment_geo_patterns.append(treatment_group)
+                        continue
+                elif req_budget < budget_range[0]:
+                    continue
+            control_groups = self.control_group_generator(treatment_group)
+            for control_group in control_groups:
+                if volume_tol is not None:
+                    control_share = self.data.aggregate_geo_share(control_group)
+                    xy_share = control_share / treatment_share
+                    if xy_share > tol_max or xy_share < tol_min:
+                        continue
+                diag.x = self.data.aggregate_time_series(control_group)
+                req_impact = diag.required_impact
+                req_budget = req_impact / self.parameters.iroas
+                if (budget_range is not None and self._constraint_not_satisfied(
+                        req_budget, budget_range[0], budget_range[1])):
+                    continue
 
-          # deepcopy is needed otherwise diag.corr gets overwritten, and so
-          # it will not be equal to diag.score.score.corr for some reason
-          design_score = TBRMMScore(copy.deepcopy(diag))
-          score = design_score.score
-          if budget_range is not None:
-            # If the budget was specified then we use the inverse of the
-            # minimum detectable iROAS for the max. budget as the last value
-            # in the scoring, instead of using the same for a budget of 1$
-            iroas = req_impact / budget_range[1]
-            design_score.score = score._replace(inv_required_impact=1 / iroas)
+                design_score = TBRMMScore(copy.deepcopy(diag))
+                score = design_score.score
+                if budget_range is not None:
+                    iroas = req_impact / budget_range[1]
+                    design_score.score = score._replace(inv_required_impact=1 / iroas)
 
-          # deepcopy is needed otherwise diag.corr gets overwritten, and so
-          # it will not be equal to diag.score.score.corr for some reason
-          design = TBRMMDesign(
-              design_score, treatment_group, control_group,
-              copy.deepcopy(diag))
-          results.push(0, design)
+                design = TBRMMDesign(
+                    design_score, treatment_group, control_group,
+                    copy.deepcopy(diag))
+                results.push(0, design)
 
     self._search_results = results
     return self.search_results()
+
 
   def search_results(self):
     """Outputs the results of the exhaustive search in a friendly format.
